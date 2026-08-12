@@ -529,6 +529,154 @@ One missing check = one critical.
 
 ---
 
+## Additional Vulnerability Categories (19–36)
+
+Vectors beyond the core categories above: composition and CPI hazards, ordering and timing attacks, arithmetic and rounding, and author-side trust.
+
+### 19. Unvalidated `remaining_accounts`
+
+**Risk**: `remaining_accounts` bypasses Anchor's `#[derive(Accounts)]` validation entirely — nothing is checked for you.
+
+**Prevention**: For every account you pull from `remaining_accounts`, manually verify owner, discriminator, PDA seeds, and data relationships, and assert the expected account count before iterating.
+
+---
+
+### 20. Self-Reentrancy (A → A)
+
+**Risk**: Unlike traditional EVM reentrancy, Solana permits a program to CPI into itself. A re-entrant call can observe/mutate half-updated state.
+
+**Prevention**: Check program addresses before CPIs and ensure a re-entrant CPI can't write to accounts your current instruction is mid-update on. Complete state writes before external calls.
+
+---
+
+### 21. Log Injection / Spoofing
+
+**Risk**: Program logs are trivially manipulated via injection, truncation, or spoofing.
+
+**Prevention**: Never parse logs to recover critical data. Emit structured **events** (`emit_cpi!` / noop-program CPI) and index those instead.
+
+---
+
+### 22. Slot / Epoch Boundary Exploitation
+
+**Risk**: Hanging state transitions on slot or epoch boundaries creates windows an attacker with Jito bundles or validator/leader access can exploit.
+
+**Prevention**: Don't gate value-bearing transitions on boundary timing. Design so no actor gains an unfair edge from controlling ordering around a boundary.
+
+---
+
+### 23. TOCTOU (Bait-and-Switch)
+
+**Risk**: State read at check-time differs from use-time — e.g. an offer's terms change between when a user reads them and when their acceptance lands.
+
+**Prevention**: Encode precise parameters into the taking instruction ("accept offer at account X for ≥ 100 SOL"), not vague references to current state. The tx fails rather than executing at unexpected terms.
+
+---
+
+### 24. Pool Squatting / Graduation Frontrunning
+
+**Risk**: When pool addresses are derived from predictable seeds (e.g. a launchpad's intended address), an attacker can create the pool first at that address.
+
+**Prevention**: Use non-deterministic pool addresses, or allow liquidity to be added to a pre-existing pool at the target address rather than assuming init.
+
+---
+
+### 25. Donation Attacks
+
+**Risk**: Your instructions are never the only way funds arrive — anyone can transfer tokens to, or add lamports to, your accounts. Inferring balances from raw `token_account.amount` lets an attacker skew your accounting.
+
+**Prevention**: Track deposits with independent internal counters. Handle sudden unexplained balance increases defensively; never derive protocol state from raw account balances.
+
+---
+
+### 26. On-Chain Randomness
+
+**Risk**: Blockchains are deterministic — true on-chain randomness is impossible. Attackers can predict block hashes, manipulate seed account values, and revert transactions with unfavorable outcomes.
+
+**Prevention**: Use an external verifiable random oracle (e.g. VRF), or design the mechanism to not need randomness at all.
+
+---
+
+### 27. Rounding Direction
+
+**Risk**: Every rounding site is a value leak if it rounds the wrong way. Consistent adversarial rounding drains a protocol over many transactions.
+
+**Prevention**: Audit each rounding site and round in the protocol's favor — down on amounts the protocol pays out, up on amounts users owe.
+
+---
+
+### 28. Unchecked Type Casts
+
+**Risk**: `as` casts silently truncate (e.g. `u64 as u32`), corrupting financial values.
+
+**Prevention**: For narrowing conversions use `TryFrom` / `try_from` and map the error to a program error — `From` / `Into` only exist for widening conversions, so there is no infallible `u64 → u32`. If you must use `as`, prove mathematically that truncation cannot occur for the value's real range.
+
+---
+
+### 29. Upgradeable Dependency Risk
+
+**Risk**: Composing with an upgradeable external program means its authority can change its behavior out from under you.
+
+**Prevention**: Prefer non-upgradeable versions of dependencies. When calling an upgradeable program, pass the minimum privileges — read-only accounts wherever possible.
+
+---
+
+### 30. `unsafe` Rust Blocks
+
+**Risk**: `unsafe` bypasses the compiler's safety checks (raw pointers, unsafe fn calls, static mut, union fields). Common in Solana for raw account-data casts: `unsafe { &*(data.as_ptr() as *const TokenAccount) }`. Misuse causes memory corruption, misaligned reads, or OOB access.
+
+**Prevention**: Only use `unsafe` for genuine performance/raw-data needs, never to silence compiler errors. Keep blocks minimal, document the invariant that makes them sound, and check alignment + bounds before casts. Audit every `unsafe` block: are all preconditions guaranteed before it executes?
+
+---
+
+### 31. Frontrunning (Trading and Initialization)
+
+**Risk**: An observer can insert a transaction just before the victim's. Beyond the obvious trading case, this includes **initialization frontrunning**: an attacker initializes an account at the target address with different settings just before the victim, who then keeps using it thinking it holds their settings.
+
+**Prevention**: Any instruction whose result depends on outside state, or that creates an account at an address someone else could reach first, is a frontrunning surface. Pin expected outcomes into the instruction (see TOCTOU), and don't assume an account you "just initialized" carries your settings — re-check.
+
+---
+
+### 32. Malicious / Observing RPC
+
+**Risk**: By default a signed transaction goes to an RPC node before it reaches the leader — a mempool-like vantage point. A malicious RPC can observe, delay, or sandwich your transaction (bundling its own buys/sells around yours without touching your signature) for worse execution.
+
+**Prevention**: Use trusted RPCs (and strong SWQoS nodes for landing). As a program author, assume any instruction can be frontrun/sandwiched and design to minimize the user's downside (slippage bounds, pinned terms).
+
+---
+
+### 33. Stale Account State Around CPIs
+
+**Risk**: Programs work on a deserialized copy of accounts and only write back at instruction end. A CPI sees **on-chain** state, not your working copy — and after a CPI your working copy does **not** reflect the callee's writes unless you reload.
+
+**Prevention**: Before a CPI where the callee must read your changes, serialize your writes first. After a CPI that mutates accounts you then read, `reload()` them. Missing either produces silent accounting bugs.
+
+---
+
+### 34. Unsafe Arbitrary Invoke
+
+**Risk**: Programs that invoke a user-supplied program (multisig/DAO proposals, some flashloans, bridges/VMs) pass through the parent call's signatures — including the user's wallet signature — to the callee with both `invoke` and `invoke_signed`.
+
+**Prevention**: Don't pass accounts you don't want mutated into the CPI at all; when you must, mark them read-only. Block (or tightly restrict) the user supplying your own program as the callee (self-reentrancy) by inspecting the proposed call's program ID and instruction data before executing.
+
+---
+
+### 35. Transient Account Owner Spoofing
+
+**Risk**: An owner check (`account.owner == other_program::ID`) is insufficient to conclude the account will always be that type. An attacker can `assign` a lamport-free system account to `other_program` for the duration of one transaction; after it ends the account is reclaimed by the system program and can later hold fake data.
+
+**Prevention**: Don't persist an account address as "trusted type X" based only on a point-in-time owner check. Re-validate owner + discriminator + data at every use, and don't rely on owner alone for accounts saved across transactions.
+
+---
+
+### 36. Hidden Backdoors (Trust Minimization)
+
+**Risk**: A determined program author can hide rug vectors: upgrade authority, fee bumped to 100%, backdoor code buried in test modules or dependencies, or accounts initialized by one program version then hidden in a later upgrade.
+
+**Prevention (as an author, to earn trust)**: non-upgradeable or strict multisig authority; fresh keypair with all prior versions reviewed; no untrusted dependencies; hard-coded caps admin can't exceed (e.g. max protocol fee const); reproducible builds; audited *with backdoors in mind*; ideally doxxed and formally verified.
+
+---
+
 ## Agent-Assisted Development Safety
 
 When an AI agent is generating or executing Solana code on the user's behalf:
@@ -560,3 +708,21 @@ When an AI agent is generating or executing Solana code on the user's behalf:
 14. Does PDA creation store and validate the canonical bump?
 15. Can an attacker pre-fund a PDA to grief initialization?
 16. Are accounts that must be read-only protected from being passed as writable?
+17. Is every account pulled from `remaining_accounts` manually validated (owner, discriminator, seeds, count)?
+18. Can a self-CPI (A → A) observe or corrupt half-updated state?
+19. Does any critical logic parse program logs instead of events?
+20. Do any value-bearing transitions hang on slot/epoch boundaries an attacker could game?
+21. Are taking-instruction terms pinned precisely to prevent TOCTOU bait-and-switch?
+22. Can a pool/account be squatted at a predictable derived address before your program creates it?
+23. Does any accounting infer balances from raw token/lamport amounts (donation attack)?
+24. Does any mechanism rely on on-chain randomness?
+25. Does every rounding site round in the protocol's favor?
+26. Are there unchecked `as` casts that could truncate financial values?
+27. Does the program compose with an upgradeable external program that could change behavior under it, and are those CPIs given minimum privileges?
+28. Is every `unsafe` block minimal, documented, and sound on alignment/bounds?
+29. Can an instruction be frontrun — including initialization frontrunning of a target address?
+30. Does the program assume a benign RPC (no sandwich/observation protection for users)?
+31. Are accounts reloaded after CPIs (and writes serialized before CPIs that read them)?
+32. When invoking a user-supplied program, are non-mutated accounts withheld or read-only, and self-reentrancy blocked?
+33. Is any account trusted as a type based only on a point-in-time owner check (transient owner attack)?
+34. Is every author-side rug vector closed — upgrade authority, hard-coded caps the admin cannot exceed, reviewed dependencies, no backdoor paths in test modules, reproducible builds?

@@ -69,6 +69,7 @@ skills/solana-dev/
     ├── idl-codegen.md               # IDL and client generation
     ├── payments.md                  # Payments (Kit, Solana Pay, Kora)
     ├── security.md                  # Security vulnerabilities & prevention
+    ├── concepts.md                  # Runtime concepts (rent, PDAs, entrypoint, wire format)
     ├── resources.md                 # Curated reference links
     ├── compatibility-matrix.md      # Version compatibility tables (Anchor/Solana/Rust/GLIBC)
     ├── common-errors.md             # Error message → solution mappings
@@ -76,6 +77,7 @@ skills/solana-dev/
     ├── rpc-quick-lookups.md         # One-shot RPC reads via curl
     ├── programs/
     │   ├── anchor.md                # Anchor program development
+    │   ├── design-patterns.md       # Program architecture, CU/CPI limits, account lifecycle
     │   └── pinocchio.md             # Pinocchio (high-performance native)
     ├── anchor/
     │   └── migrating-v0.32-to-v1.md # Anchor v1 migration

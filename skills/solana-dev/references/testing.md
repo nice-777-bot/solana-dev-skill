@@ -388,6 +388,16 @@ NO_DNA=1 surfpool start --legacy-anchor-compatibility --anchor-test-config-path 
 
 Keep a small suite that runs against devnet before releases: deploy, exercise one happy path per instruction, verify explorer-visible effects. Use Kit with `solanaRpc({ rpcUrl })` pointed at devnet and a funded keypair via `signerFromFile('~/.config/solana/id.json')`. These are slow and flaky by nature — never gate PRs on them.
 
+## Fuzz Testing
+
+Fuzzing generates large volumes of randomized inputs and programmatically asserts the program still behaves correctly — surfacing edge cases, logic errors, and economic attack vectors that hand-written tests miss. Solana programs take two input surfaces: **instruction data** (easy to vary within constraints) and **accounts** (the hard part — you must synthesize valid account structures with varied ownership, balances, and data layouts).
+
+- **[Trident](https://ackee.xyz/trident/docs/latest/)** (Ackee) — the dedicated Solana fuzzing framework: generates instruction sequences targeting potential vulnerabilities, with account-state modeling built in. Start here for program-level fuzzing.
+- **[Crucible](https://github.com/asymmetric-research/crucible)** (Asymmetric Research) — High-performance Solana Program Fuzzer written in Rust with LibAFL/LiteSVM backend with sBPF edge coverage and state coverage.
+- **libFuzzer** via [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) — coverage-guided, mutation-based fuzzing for Rust functions without the full Solana runtime. Good for pure helpers (math, parsing); `cargo fuzz init` generates targets that link `libfuzzer-sys` directly, no C shim required.
+
+Most effective setups combine **coverage-guided** fuzzing (prioritize inputs hitting untested paths) with **transaction-sequence** fuzzing (chains of instructions mirroring real user flows). Start with one critical instruction type and expand; even an overnight run often finds edge cases manual tests missed.
+
 ## Test Layout Recommendation
 
 ```
