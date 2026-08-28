@@ -93,7 +93,7 @@ Dropping lookup tables costs nothing in practice: 64 inline addresses at 32 byte
 
 ## Reading transactions and blocks (breaking)
 
-Pass `maxSupportedTransactionVersion: 1` — the JSON **integer** `1` — on `getTransaction`, `getBlock`, and `blockSubscribe`. Passing `0` fails on a v1 transaction exactly like omitting the parameter. Passing a **string** (`"1"`, `"legacy"`) is worse: the field is numeric, so it fails request validation with `-32602` on *every* call, v1 or not.
+Pass `maxSupportedTransactionVersion: 1` — the JSON **integer** `1` — on `getTransaction`, `getBlock`, `blockSubscribe`, and (if your provider exposes it) `getTransactionsForAddress` with `transactionDetails: "full"`. Passing `0` fails on a v1 transaction exactly like omitting the parameter. Passing a **string** (`"1"`, `"legacy"`) is worse: the field is numeric, so it fails request validation with `-32602` on *every* call, v1 or not.
 
 ```ts
 const tx = await rpc.getTransaction(signature, { maxSupportedTransactionVersion: 1 }).send();
@@ -183,6 +183,8 @@ match (&message.config, message.versioned) {
 20,000 CU × 250,000 micro-lamports/CU = 5,000 lamports   // v0
                                         5,000 lamports   // the v1 equivalent
 ```
+
+**5. Reward parsers silently drop `DeactivatedStake` payouts.** Since Agave 4.2, stake accounts that finish deactivating receive their final payout under a new `rewardType` value, `DeactivatedStake`, in `getBlock` / `blockSubscribe` reward arrays. The object shape is identical to 4.1, so a parser that only accepts the reward types it already knows will skip these payouts **without erroring**. Add `DeactivatedStake` to the accepted values, and log any `rewardType` you don't recognize instead of dropping the record. `getInflationReward` is unaffected.
 
 ## Sending v1 transactions
 
